@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Three.js FBX Animasi Bergerak</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module">
+      import * as THREE from "three";
+      import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+
+      // Import our modules
+      import { SceneManager } from "./assets/js/scene.js";
+      import { CityGenerator } from "./assets/js/city.js";
+      import { CharacterController } from "./assets/js/character.js";
+      import { InputHandler } from "./assets/js/input.js";
+      import { CameraController } from "./assets/js/camera.js";
+
+      // Initialize all modules
+      const sceneManager = new SceneManager();
+      const cityGenerator = new CityGenerator(sceneManager.scene);
+      const inputHandler = new InputHandler();
+      const cameraController = new CameraController(sceneManager.camera);
+
+      let characterController;
+
+      // Initialize the application
+      async function init() {
+        // Generate the city
+        cityGenerator.generateCity();
+
+        // Initialize character controller
+        characterController = new CharacterController(sceneManager.scene);
+        await characterController.init();
+
+        // Set up collision detection - pass buildings to character controller
+        const buildings = cityGenerator.getBuildings();
+        characterController.setBuildings(buildings);
+
+        // Set camera target to character
+        cameraController.setTarget(characterController.getModel());
+
+        // Start animation loop
+        animate();
+      }
+
+      function animate() {
+        requestAnimationFrame(animate);
+
+        if (characterController) {
+          // Get input and update character and camera
+          const input = inputHandler.getMovementInput();
+          characterController.update(input);
+
+          // Update camera to follow character with input for arrow key controls
+          cameraController.update(input);
+        }
+
+        // Render the scene
+        sceneManager.render();
+      }
+
+      // Start the application
+      init();
+    </script>
+  </body>
+</html>

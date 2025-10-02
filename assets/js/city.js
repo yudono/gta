@@ -16,7 +16,9 @@ export class CityGenerator {
 
   loadTextures() {
     // Load building texture
-    this.buildingTexture = this.textureLoader.load("assets/textures/building.svg");
+    this.buildingTexture = this.textureLoader.load(
+      "assets/textures/building.svg"
+    );
     this.buildingTexture.wrapS = THREE.RepeatWrapping;
     this.buildingTexture.wrapT = THREE.RepeatWrapping;
   }
@@ -50,10 +52,11 @@ export class CityGenerator {
 
   generateStreets(gridSize, blockSize, streetWidth) {
     const streetMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
-    
+
     // Create horizontal streets
     for (let z = 0; z < gridSize; z++) {
-      if (z % 3 === 1) { // Every 3rd row is a street
+      if (z % 3 === 1) {
+        // Every 3rd row is a street
         const street = new THREE.Mesh(
           new THREE.PlaneGeometry(gridSize * blockSize, streetWidth),
           streetMaterial
@@ -67,7 +70,8 @@ export class CityGenerator {
 
     // Create vertical streets
     for (let x = 0; x < gridSize; x++) {
-      if (x % 3 === 1) { // Every 3rd column is a street
+      if (x % 3 === 1) {
+        // Every 3rd column is a street
         const street = new THREE.Mesh(
           new THREE.PlaneGeometry(streetWidth, gridSize * blockSize),
           streetMaterial
@@ -125,7 +129,7 @@ export class CityGenerator {
           z: posZ,
           width: buildingWidth,
           depth: buildingDepth,
-          height: buildingHeight
+          height: buildingHeight,
         });
 
         this.scene.add(building);
@@ -141,15 +145,15 @@ export class CityGenerator {
       const depth = THREE.MathUtils.randInt(80, 120);
 
       const geometry = new THREE.BoxGeometry(width, height, depth);
-      const material = new THREE.MeshStandardMaterial({ 
+      const material = new THREE.MeshStandardMaterial({
         map: this.buildingTexture.clone(),
         metalness: 0.2,
         roughness: 0.6,
-        color: new THREE.Color().setHSL(Math.random(), 0.3, 0.8)
+        color: new THREE.Color().setHSL(Math.random(), 0.3, 0.8),
       });
-      
+
       material.map.repeat.set(width / 40, height / 80);
-      
+
       const building = new THREE.Mesh(geometry, material);
       building.castShadow = true;
       building.receiveShadow = true;
@@ -159,7 +163,7 @@ export class CityGenerator {
       const z = THREE.MathUtils.randFloatSpread(2500);
 
       building.position.set(x, height / 2, z);
-      
+
       // Store landmark building data for collision detection
       this.buildings.push({
         mesh: building,
@@ -167,9 +171,9 @@ export class CityGenerator {
         z: z,
         width: width,
         depth: depth,
-        height: height
+        height: height,
       });
-      
+
       this.scene.add(building);
     }
   }

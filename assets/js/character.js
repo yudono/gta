@@ -215,32 +215,38 @@ export class CharacterController {
 
   // Check collision with buildings
   checkCollision(newPosition) {
+    if (!this.buildings || this.buildings.length === 0) {
+      return false; // No buildings to check collision with
+    }
+
     for (let building of this.buildings) {
+      // Skip if building doesn't have required properties
+      if (!building.x || !building.z || !building.width || !building.depth) {
+        continue;
+      }
+
       // Calculate distance from character to building center
       const dx = newPosition.x - building.x;
       const dz = newPosition.z - building.z;
 
-      // Check if character is within building bounds (with some padding)
+      // Check if character is within building bounds (with character radius padding)
       const halfWidth = building.width / 2 + this.characterRadius;
       const halfDepth = building.depth / 2 + this.characterRadius;
 
+      // Use AABB (Axis-Aligned Bounding Box) collision detection
       if (Math.abs(dx) < halfWidth && Math.abs(dz) < halfDepth) {
+        // Additional check: calculate the overlap to provide better collision response
+        const overlapX = halfWidth - Math.abs(dx);
+        const overlapZ = halfDepth - Math.abs(dz);
+
         console.log(
-          "Collision with building at:",
-          building.x,
-          building.z,
-          "Character at:",
-          newPosition.x,
-          newPosition.z
+          `Collision detected with building at (${building.x}, ${building.z})`,
+          `Character at (${newPosition.x.toFixed(2)}, ${newPosition.z.toFixed(
+            2
+          )})`,
+          `Overlap: X=${overlapX.toFixed(2)}, Z=${overlapZ.toFixed(2)}`
         );
-        console.log(
-          "Building size:",
-          building.width,
-          "x",
-          building.depth,
-          "Character radius:",
-          this.characterRadius
-        );
+
         return true; // Collision detected
       }
     }
@@ -253,17 +259,15 @@ export class CharacterController {
     const delta = this.clock.getDelta();
 
     const rotationSpeed = 3.0 * delta;
-    const moveSpeed = 15 * delta;
+    const moveSpeed = 3 * delta;
     let isMoving = false;
 
     // Handle left/right rotation with A/D keys - rotate the wrapper group
     if (input.left) {
       this.model.rotation.y += rotationSpeed;
-      console.log("Rotating left, new rotation:", this.model.rotation.y);
     }
     if (input.right) {
       this.model.rotation.y -= rotationSpeed;
-      console.log("Rotating right, new rotation:", this.model.rotation.y);
     }
 
     // Calculate forward direction based on wrapper group rotation
@@ -271,14 +275,36 @@ export class CharacterController {
     forward.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.model.rotation.y);
     forward.normalize();
 
-    // Handle forward/backward movement with W/S keys (collision disabled temporarily)
+    // Store current position for collision checking
+    const currentPosition = this.model.position.clone();
+
+    // Handle forward/backward movement with W/S keys WITH collision detection
     if (input.forward) {
-      this.model.position.add(forward.clone().multiplyScalar(moveSpeed));
-      isMoving = true;
+      const newPosition = currentPosition
+        .clone()
+        .add(forward.clone().multiplyScalar(moveSpeed));
+
+      // Check collision before moving
+      if (!this.checkCollision(newPosition)) {
+        this.model.position.copy(newPosition);
+        isMoving = true;
+      } else {
+        console.log("Forward movement blocked by collision");
+      }
     }
+
     if (input.backward) {
-      this.model.position.add(forward.clone().multiplyScalar(-moveSpeed));
-      isMoving = true;
+      const newPosition = currentPosition
+        .clone()
+        .add(forward.clone().multiplyScalar(-moveSpeed));
+
+      // Check collision before moving
+      if (!this.checkCollision(newPosition)) {
+        this.model.position.copy(newPosition);
+        isMoving = true;
+      } else {
+        console.log("Backward movement blocked by collision");
+      }
     }
 
     // Keep character on ground level

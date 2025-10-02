@@ -24,10 +24,14 @@ export class CharacterController {
   }
 
   async init() {
+    await this.loadCharacter();
+  }
+
+  async loadCharacter() {
     try {
       // Load the character model
       const fbxLoader = new FBXLoader();
-      this.model = await new Promise((resolve, reject) => {
+      const characterMesh = await new Promise((resolve, reject) => {
         fbxLoader.load(
           "assets/models/rp_eric_rigged_001_u3d.fbx",
           resolve,
@@ -36,7 +40,12 @@ export class CharacterController {
         );
       });
 
-      // Scale and position the character
+      // Create a wrapper group for the character
+      this.model = new THREE.Group();
+      this.characterMesh = characterMesh;
+      this.model.add(this.characterMesh);
+
+      // Scale and position the wrapper group
       this.model.scale.setScalar(0.01); // 10x smaller character (0.1 / 10 = 0.01)
       this.model.position.set(0, 0, 0);
 
@@ -72,7 +81,7 @@ export class CharacterController {
       });
 
       // Apply textures to all materials
-      this.model.traverse((child) => {
+      this.characterMesh.traverse((child) => {
         if (child.isMesh) {
           child.material = new THREE.MeshLambertMaterial({
             map: diffuseTexture,
@@ -86,74 +95,45 @@ export class CharacterController {
         }
       });
 
-      // Add to scene
+      // Add wrapper group to scene
       this.scene.add(this.model);
 
-      // Setup animation mixer
-      this.mixer = new THREE.AnimationMixer(this.model);
+      // Setup animation mixer on the character mesh, not the wrapper group
+      this.mixer = new THREE.AnimationMixer(this.characterMesh);
       this.actions = {};
 
-      // Load built-in animations first
-      if (this.model.animations && this.model.animations.length > 0) {
-        this.model.animations.forEach((clip) => {
-          const action = this.mixer.clipAction(clip);
-          this.actions[clip.name] = action;
-        });
+      // Check if the model has built-in animations
+      if (
+        this.characterMesh.animations &&
+        this.characterMesh.animations.length > 0
+      ) {
+        // Filter out rotation tracks from built-in animations
+        const builtInClip = this.characterMesh.animations[0].clone();
+        builtInClip.name = "Idle";
+        builtInClip.tracks = builtInClip.tracks.filter(
+          (track) =>
+            !track.name.includes(".position") &&
+            !track.name.includes(".rotation")
+        );
+
+        this.actions["Idle"] = this.mixer.clipAction(builtInClip);
+        this.actions["Idle"].play();
+        this.activeAction = this.actions["Idle"];
       }
 
       // Load external animations
       await this.loadExternalAnimations();
 
-      // Start with idle animation
+      // Start with idle animation if available
       if (this.actions["Idle"]) {
         this.activeAction = this.actions["Idle"];
         this.activeAction.play();
       }
 
-      console.log("Character loaded successfully with textures");
+      console.log("Character loaded successfully with wrapper group");
     } catch (error) {
       console.error("Error loading character:", error);
     }
-  }
-
-  loadCharacter() {
-    return new Promise((resolve) => {
-      this.loader.load("person/rp_eric_rigged_001_u3d.fbx", (personFbx) => {
-        this.model = personFbx;
-        this.scene.add(this.model);
-        this.model.scale.set(1, 1, 1);
-        this.model.position.set(0, 0, 0);
-
-        // Apply existing textures from the person model
-        this.model.traverse((obj) => {
-          if (obj.isMesh) {
-            obj.castShadow = true;
-            obj.receiveShadow = true;
-            // Keep original materials but ensure they work with lighting
-            if (obj.material) {
-              obj.material.metalness = 0.1;
-              obj.material.roughness = 0.8;
-            }
-          }
-        });
-
-        // Setup animation mixer
-        this.mixer = new THREE.AnimationMixer(this.model);
-
-        // Check if the model has built-in animations
-        if (personFbx.animations && personFbx.animations.length > 0) {
-          // Use built-in animations if available
-          this.actions["Idle"] = this.mixer.clipAction(personFbx.animations[0]);
-          this.actions["Idle"].play();
-          this.activeAction = this.actions["Idle"];
-        } else {
-          // Load external animations
-          this.loadExternalAnimations();
-        }
-
-        resolve();
-      });
-    });
   }
 
   async loadExternalAnimations() {
@@ -271,13 +251,12 @@ export class CharacterController {
     if (!this.model) return;
 
     const delta = this.clock.getDelta();
-    if (this.mixer) this.mixer.update(delta);
 
-    const rotationSpeed = 3.0 * delta; // Increased rotation speed for better visibility
-    const moveSpeed = 15 * delta; // Keep movement speed same
+    const rotationSpeed = 3.0 * delta;
+    const moveSpeed = 15 * delta;
     let isMoving = false;
 
-    // Handle left/right rotation with A/D keys
+    // Handle left/right rotation with A/D keys - rotate the wrapper group
     if (input.left) {
       this.model.rotation.y += rotationSpeed;
       console.log("Rotating left, new rotation:", this.model.rotation.y);
@@ -287,14 +266,10 @@ export class CharacterController {
       console.log("Rotating right, new rotation:", this.model.rotation.y);
     }
 
-    // Calculate forward direction based on character rotation
+    // Calculate forward direction based on wrapper group rotation
     const forward = new THREE.Vector3(0, 0, 1);
     forward.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.model.rotation.y);
     forward.normalize();
-
-    // Store current position for collision checking
-    const currentPosition = this.model.position.clone();
-    let newPosition = currentPosition.clone();
 
     // Handle forward/backward movement with W/S keys (collision disabled temporarily)
     if (input.forward) {
@@ -306,11 +281,14 @@ export class CharacterController {
       isMoving = true;
     }
 
-    // Keep character on ground level - only set Y position, preserve X and Z
+    // Keep character on ground level
     this.model.position.y = 0;
 
     // Switch animation based on movement
     this.switchAction(isMoving ? "Walk" : "Idle");
+
+    // Update mixer AFTER rotation and movement to prevent override
+    if (this.mixer) this.mixer.update(delta);
   }
 
   getModel() {

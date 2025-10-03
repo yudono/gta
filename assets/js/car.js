@@ -18,8 +18,11 @@ export class CarController {
     // Car movement properties
     this.carSpeed = 3;
     this.laneWidth = 1.2;
-    // Car model appears to face -Z; add heading offset to align with movement
-    this.carHeadingOffset = 0; // remove extra 180° offset; rely on template rotation
+    // Car model should be rotated 180° relative to movement
+    this.carHeadingOffset = Math.PI; // rotate 180° to match requested orientation
+    this.carRadius = 1.2; // approximate half-width for collision padding
+    this.wheelSpinFactor = 6; // visual spin factor for wheel rotation
+    this.buildings = this.cityGenerator?.getBuildings?.() || [];
     // Ensure spawn diversity: avoid placing multiple cars on the same lane initially
     this.spawnedStreetIds = new Set();
   }
@@ -104,6 +107,16 @@ export class CarController {
               const materialName = child.material?.name?.toLowerCase() || "";
               let texture = null;
               let materialConfig = {};
+
+              // Mark likely wheel meshes for rotation updates
+              const childName = (child.name || "").toLowerCase();
+              if (
+                materialName.includes("tire") ||
+                materialName.includes("wheel") ||
+                childName.includes("wheel")
+              ) {
+                child.userData.isWheel = true;
+              }
 
               // Map materials to appropriate textures with better matching
               if (
@@ -272,12 +285,11 @@ export class CarController {
           object.userData.originalMaterials = originalMaterials;
 
           // Scale and prepare the car template
-          // Reduce car size to 0.8x of previous
-          object.scale.setScalar(0.02 * 0.8);
+          // Reduce car size to 0.8x of previous (20% smaller)
+          object.scale.setScalar(0.01);
 
-          // Fix car model orientation - rotate 180 degrees around Y axis
-          // This corrects the model's default forward direction
-          object.rotation.y = Math.PI;
+          // Keep template orientation neutral; rotation is set per car spawn
+          object.rotation.y = 0;
 
           this.carTemplate = object;
 
@@ -501,6 +513,11 @@ export class CarController {
           }
         }
 
+        // Ensure spawn point is not inside a building (AABB check)
+        if (validPosition && this.checkCollision({ x: testX, z: testZ })) {
+          validPosition = false;
+        }
+
         attempts++;
       }
 
@@ -544,7 +561,19 @@ export class CarController {
       // Align car rotation with actual movement vector (start -> end)
       const dirX = street.end.x - street.start.x;
       const dirZ = street.end.z - street.start.z;
-      car.rotation.y = Math.atan2(dirX, dirZ);
+      car.rotation.y = Math.atan2(dirX, dirZ) + this.carHeadingOffset;
+
+      // Collect wheel meshes for rotation animation
+      const wheels = [];
+      car.traverse((child) => {
+        if (
+          child.isMesh &&
+          (child.userData?.isWheel ||
+            /tire|wheel/.test((child.material?.name || "").toLowerCase()))
+        ) {
+          wheels.push(child);
+        }
+      });
 
       // Add car properties
       car.userData = {
@@ -554,6 +583,7 @@ export class CarController {
         nextTurn: null,
         isAtIntersection: false,
         turnCooldown: 0,
+        wheels,
       };
 
       // Add to scene and cars array
@@ -595,9 +625,32 @@ export class CarController {
         street.start.x + (street.end.x - street.start.x) * userData.progress;
       const newZ =
         street.start.z + (street.end.z - street.start.z) * userData.progress;
+      // Building collision check: prevent passing through walls
+      const testPos = { x: newX, z: newZ };
+      if (this.checkCollision(testPos)) {
+        // Try to turn to avoid collision; if not near intersection, slow and hold
+        if (userData.turnCooldown <= 0) {
+          this.checkForTurn(car, userData);
+          userData.turnCooldown = 1.0;
+        }
+        // Revert progress to avoid penetrating building
+        userData.progress -= userData.speed * deltaTime * 0.01;
+      } else {
+        // Apply position update
+        const prevX = car.position.x;
+        const prevZ = car.position.z;
+        car.position.x = newX;
+        car.position.z = newZ;
 
-      car.position.x = newX;
-      car.position.z = newZ;
+        // Spin wheels based on distance moved
+        const dist = Math.hypot(newX - prevX, newZ - prevZ);
+        const angle = dist * this.wheelSpinFactor;
+        if (userData.wheels && userData.wheels.length) {
+          for (const wheel of userData.wheels) {
+            wheel.rotation.x -= angle;
+          }
+        }
+      }
 
       // Check for intersections and potential turns
       if (
@@ -679,7 +732,7 @@ export class CarController {
       // Align car rotation with actual movement vector (start -> end) on new street
       const ndx = newStreet.end.x - newStreet.start.x;
       const ndz = newStreet.end.z - newStreet.start.z;
-      car.rotation.y = Math.atan2(ndx, ndz);
+      car.rotation.y = Math.atan2(ndx, ndz) + this.carHeadingOffset;
     }
   }
 
@@ -692,6 +745,24 @@ export class CarController {
 
     // Different directions are valid turns (left/right turns)
     return true;
+  }
+
+  // Axis-Aligned Bounding Box collision check against buildings
+  checkCollision(newPosition) {
+    if (!this.buildings || this.buildings.length === 0) return false;
+
+    for (const b of this.buildings) {
+      if (b.x === undefined || b.z === undefined || !b.width || !b.depth)
+        continue;
+      const dx = newPosition.x - b.x;
+      const dz = newPosition.z - b.z;
+      const halfW = b.width / 2 + this.carRadius;
+      const halfD = b.depth / 2 + this.carRadius;
+      if (Math.abs(dx) < halfW && Math.abs(dz) < halfD) {
+        return true;
+      }
+    }
+    return false;
   }
 
   getCars() {

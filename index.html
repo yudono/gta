@@ -33,6 +33,7 @@
       import { CharacterController } from "./assets/js/character.js";
       import { InputHandler } from "./assets/js/input.js";
       import { CameraController } from "./assets/js/camera.js";
+      import { CarController } from "./assets/js/car.js";
 
       // Initialize all modules
       const sceneManager = new SceneManager();
@@ -41,6 +42,7 @@
       const cameraController = new CameraController(sceneManager.camera);
 
       let characterController;
+      let carController;
 
       // Initialize the application
       async function init() {
@@ -50,6 +52,10 @@
         // Initialize character controller
         characterController = new CharacterController(sceneManager.scene);
         await characterController.init();
+
+        // Initialize car controller
+        carController = new CarController(sceneManager.scene);
+        await carController.init();
 
         // Set up collision detection - pass buildings to character controller
         const buildings = cityGenerator.getBuildings();
@@ -72,6 +78,11 @@
 
           // Update camera to follow character with input for arrow key controls
           cameraController.update(input);
+        }
+
+        // Update car controller
+        if (carController) {
+          carController.update();
         }
 
         // Render the scene

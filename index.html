@@ -34,6 +34,7 @@
       import { InputHandler } from "./assets/js/input.js";
       import { CameraController } from "./assets/js/camera.js";
       import { CarController } from "./assets/js/car.js";
+      import { NPCController } from "./assets/js/npc.js";
 
       // Initialize all modules
       const sceneManager = new SceneManager();
@@ -43,6 +44,7 @@
 
       let characterController;
       let carController;
+      let npcController;
 
       // Initialize the application
       async function init() {
@@ -54,8 +56,12 @@
         await characterController.init();
 
         // Initialize car controller
-        carController = new CarController(sceneManager.scene);
+        carController = new CarController(sceneManager.scene, cityGenerator);
         await carController.init();
+
+        // Initialize NPC controller
+        npcController = new NPCController(sceneManager.scene);
+        await npcController.init();
 
         // Set up collision detection - pass buildings to character controller
         const buildings = cityGenerator.getBuildings();
@@ -83,6 +89,11 @@
         // Update car controller
         if (carController) {
           carController.update();
+        }
+
+        // Update NPC controller
+        if (npcController) {
+          npcController.update();
         }
 
         // Render the scene

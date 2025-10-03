@@ -527,13 +527,13 @@ export class CarController {
       car.position.z =
         street.start.z + (street.end.z - street.start.z) * progress;
 
-      // Set car rotation based on street direction and lane (fixed to face forward)
+      // Set car rotation based on street direction and lane (corrected for forward movement)
       if (street.direction === "horizontal") {
-        // For horizontal streets: right lane goes east, left lane goes west
-        car.rotation.y = street.lane === "right" ? Math.PI / 2 : -Math.PI / 2;
+        // For horizontal streets: right lane goes east (positive X), left lane goes west (negative X)
+        car.rotation.y = street.lane === "right" ? -Math.PI / 2 : Math.PI / 2;
       } else {
-        // For vertical streets: down lane goes south, up lane goes north
-        car.rotation.y = street.lane === "down" ? 0 : Math.PI;
+        // For vertical streets: down lane goes south (positive Z), up lane goes north (negative Z)
+        car.rotation.y = street.lane === "down" ? Math.PI : 0;
       }
 
       // Add car properties
@@ -664,14 +664,14 @@ export class CarController {
       car.position.x = newStreet.start.x;
       car.position.z = newStreet.start.z;
 
-      // Update car rotation for new direction (fixed to face forward)
+      // Update car rotation for new direction (corrected for forward movement)
       if (newStreet.direction === "horizontal") {
-        // For horizontal streets: right lane goes east, left lane goes west
+        // For horizontal streets: right lane goes east (positive X), left lane goes west (negative X)
         car.rotation.y =
-          newStreet.lane === "right" ? Math.PI / 2 : -Math.PI / 2;
+          newStreet.lane === "right" ? -Math.PI / 2 : Math.PI / 2;
       } else {
-        // For vertical streets: down lane goes south, up lane goes north
-        car.rotation.y = newStreet.lane === "down" ? 0 : Math.PI;
+        // For vertical streets: down lane goes south (positive Z), up lane goes north (negative Z)
+        car.rotation.y = newStreet.lane === "down" ? Math.PI : 0;
       }
     }
   }

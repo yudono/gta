@@ -25,9 +25,9 @@ export class CityGenerator {
 
   generateCity() {
     const gridSize = 40; // Increased from 20 to 40 for much larger city
-    const blockSize = 15; // Keep block size same
-    const streetWidth = 3; // Keep street width same
-    const buildingSpacing = 1;
+    const blockSize = 20; // Increased from 15 to 20 for more spacing
+    const streetWidth = 4; // Increased from 3 to 4 for wider streets
+    const buildingSpacing = 3; // Increased from 1 to 3 for more spacing between buildings
 
     // Create much larger ground
     const groundGeometry = new THREE.PlaneGeometry(

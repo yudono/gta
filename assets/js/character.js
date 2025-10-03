@@ -55,7 +55,7 @@ export class CharacterController {
       // Load all textures
       const diffuseTexture = await new Promise((resolve, reject) => {
         textureLoader.load(
-          "assets/textures/rp_eric_rigged_001_dif.jpg",
+          "assets/textures/person/rp_eric_rigged_001_dif.jpg",
           resolve,
           undefined,
           reject
@@ -64,7 +64,7 @@ export class CharacterController {
 
       const normalTexture = await new Promise((resolve, reject) => {
         textureLoader.load(
-          "assets/textures/rp_eric_rigged_001_norm.jpg",
+          "assets/textures/person/rp_eric_rigged_001_norm.jpg",
           resolve,
           undefined,
           reject
@@ -73,7 +73,7 @@ export class CharacterController {
 
       const glossTexture = await new Promise((resolve, reject) => {
         textureLoader.load(
-          "assets/textures/rp_eric_rigged_001_gloss.jpg",
+          "assets/textures/person/rp_eric_rigged_001_gloss.jpg",
           resolve,
           undefined,
           reject
@@ -139,8 +139,8 @@ export class CharacterController {
   async loadExternalAnimations() {
     const fbxLoader = new FBXLoader();
 
+    // Load Idle animation
     try {
-      // Load Idle animation
       const idleAnimation = await new Promise((resolve, reject) => {
         fbxLoader.load(
           "assets/animations/Idle.fbx",
@@ -163,9 +163,14 @@ export class CharacterController {
 
         const idleAction = this.mixer.clipAction(idleClip);
         this.actions["Idle"] = idleAction;
+        console.log("Idle animation loaded successfully");
       }
+    } catch (error) {
+      console.error("Error loading Idle animation:", error);
+    }
 
-      // Load Walk animation
+    // Load Walk animation
+    try {
       const walkAnimation = await new Promise((resolve, reject) => {
         fbxLoader.load(
           "assets/animations/Walk.fbx",
@@ -188,17 +193,65 @@ export class CharacterController {
 
         const walkAction = this.mixer.clipAction(walkClip);
         this.actions["Walk"] = walkAction;
+        console.log("Walk animation loaded successfully");
       }
-
-      console.log("External animations loaded:", Object.keys(this.actions));
     } catch (error) {
-      console.error("Error loading external animations:", error);
+      console.error("Error loading Walk animation:", error);
     }
+
+    // Load Running animation
+    try {
+      const runningAnimation = await new Promise((resolve, reject) => {
+        fbxLoader.load(
+          "assets/animations/Running.fbx",
+          resolve,
+          undefined,
+          reject
+        );
+      });
+
+      if (
+        runningAnimation.animations &&
+        runningAnimation.animations.length > 0
+      ) {
+        const runningClip = runningAnimation.animations[0];
+        runningClip.name = "Running";
+
+        // Filter out position and rotation tracks to prevent sliding and rotation interference
+        runningClip.tracks = runningClip.tracks.filter(
+          (track) =>
+            !track.name.includes(".position") &&
+            !track.name.includes(".rotation")
+        );
+
+        const runningAction = this.mixer.clipAction(runningClip);
+        this.actions["Running"] = runningAction;
+        console.log("Running animation loaded successfully");
+      }
+    } catch (error) {
+      console.error("Error loading Running animation:", error);
+      console.log("Running animation will be disabled, using Walk instead");
+    }
+
+    console.log("External animations loaded:", Object.keys(this.actions));
   }
 
   switchAction(name) {
     const newAction = this.actions[name];
-    if (!newAction || this.activeAction === newAction) return;
+    console.log(
+      `Switching to animation: ${name}`,
+      newAction ? "found" : "not found"
+    );
+
+    if (!newAction) {
+      console.warn(
+        `Animation '${name}' not found. Available animations:`,
+        Object.keys(this.actions)
+      );
+      return;
+    }
+
+    if (this.activeAction === newAction) return;
 
     newAction.reset().fadeIn(0.3).play();
     if (this.activeAction) {
@@ -206,6 +259,7 @@ export class CharacterController {
     }
 
     this.activeAction = newAction;
+    console.log(`Active animation switched to: ${name}`);
   }
 
   // Method to set buildings for collision detection
@@ -259,7 +313,9 @@ export class CharacterController {
     const delta = this.clock.getDelta();
 
     const rotationSpeed = 3.0 * delta;
-    const moveSpeed = 3 * delta;
+    // Adjust move speed based on whether character is running
+    const baseSpeed = input.isRunning ? 8 : 3; // Running is significantly faster than walking
+    const moveSpeed = baseSpeed * delta;
     let isMoving = false;
 
     // Handle left/right rotation with A/D keys - rotate the wrapper group
@@ -310,8 +366,16 @@ export class CharacterController {
     // Keep character on ground level
     this.model.position.y = 0;
 
-    // Switch animation based on movement
-    this.switchAction(isMoving ? "Walk" : "Idle");
+    // Switch animation based on movement and running state
+    if (isMoving) {
+      if (input.isRunning && input.forward && this.actions["Running"]) {
+        this.switchAction("Running");
+      } else {
+        this.switchAction("Walk");
+      }
+    } else {
+      this.switchAction("Idle");
+    }
 
     // Update mixer AFTER rotation and movement to prevent override
     if (this.mixer) this.mixer.update(delta);

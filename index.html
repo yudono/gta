@@ -30,11 +30,11 @@
       // Import our modules
       import { SceneManager } from "./assets/js/scene.js";
       import { CityGenerator } from "./assets/js/city.js";
-      import { CharacterController } from "./assets/js/character.js";
+      import { PlayerController } from "./assets/js/player.js";
       import { InputHandler } from "./assets/js/input.js";
       import { CameraController } from "./assets/js/camera.js";
       import { CarController } from "./assets/js/car.js";
-      import { NPCController } from "./assets/js/npc.js";
+      import { NonPlayableCharacter } from "./assets/js/npc.js";
 
       // Initialize all modules
       const sceneManager = new SceneManager();
@@ -44,28 +44,33 @@
 
       let characterController;
       let carController;
-      let npcController;
+      let nonPlayableCharacter;
 
       // Initialize the application
       async function init() {
         // Generate the city
         cityGenerator.generateCity();
+        // Prepare building data early for collision-aware spawns
+        const buildings = cityGenerator.getBuildings();
 
-        // Initialize character controller
-        characterController = new CharacterController(sceneManager.scene);
+        // Initialize player controller
+        characterController = new PlayerController(sceneManager.scene);
         await characterController.init();
+        // Pass buildings to player for collision detection
+        characterController.setBuildings(buildings);
 
         // Initialize car controller
         carController = new CarController(sceneManager.scene, cityGenerator);
         await carController.init();
 
-        // Initialize NPC controller
-        npcController = new NPCController(sceneManager.scene);
-        await npcController.init();
+        // Initialize simple follower NPC manager
+        nonPlayableCharacter = new NonPlayableCharacter(sceneManager.scene);
+        nonPlayableCharacter.setPlayer(characterController.getModel());
+        nonPlayableCharacter.setBuildings(buildings);
+        await nonPlayableCharacter.init();
 
-        // Set up collision detection - pass buildings to character controller
-        const buildings = cityGenerator.getBuildings();
-        characterController.setBuildings(buildings);
+        // Link NPCs to player for collision avoidance
+        characterController.setNPCController(nonPlayableCharacter);
 
         // Set camera target to character
         cameraController.setTarget(characterController.getModel());
@@ -91,9 +96,9 @@
           carController.update();
         }
 
-        // Update NPC controller
-        if (npcController) {
-          npcController.update();
+        // Update follower NPCs
+        if (nonPlayableCharacter) {
+          nonPlayableCharacter.update();
         }
 
         // Render the scene

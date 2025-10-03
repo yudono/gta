@@ -1,362 +1,651 @@
 import * as THREE from "three";
 import { BaseCharacter } from "./base-character.js";
+import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 
-export class NPCController extends BaseCharacter {
+// NPCs that roam the street network similar to cars
+export class NonPlayableCharacter extends BaseCharacter {
   constructor(scene) {
     super(scene);
     this.npcs = [];
-    this.maxNPCs = 50;
-    this.npcSpeed = 2.0;
+    this.count = 100;
+    this.isInitialized = false;
 
-    // City layout parameters
-    this.cityConfig = {
-      gridSize: 40,
-      blockSize: 20,
-      laneWidth: 1.5,
-      streetSpacing: 3, // Streets every 3rd row/column
-    };
+    // Street movement props (aligned with CarController)
+    this.streets = [];
+    this.intersections = [];
+    this.laneWidth = 1.2;
+    this.walkSpeed = 3.0; // match player walk speed
+    this.runSpeed = 8.0; // match player run speed
+    this.idleRatio = 1.0; // all NPCs idle by default
+    // Spawn control near player
+    this.spawnRadius = 40; // spawn NPCs within this radius around player
+    this.minSpawnSpacing = 5.0; // wider spacing between NPC spawns
+    this.spawnAvoidPlayerRadius = 10.0; // avoid spawning too close to player
+    this.playerModel = null; // set by setPlayer
+    // Track lanes already used for spawning to avoid clustering on one path
+    this.usedSpawnStreetIds = new Set();
+    // Track lanes occupied by any NPC to prefer unique movement paths
+    this.occupiedStreetIds = new Set();
+    // Follow behavior radii (tripled for stronger engagement)
+    this.followStartRadius = 60; // general follow range threshold
+    this.runRadius = 12; // decreased run radius for more walking when near
+    this.stopFollowRadius = 90; // stop following when player is very far
+    this.playerStopRadius = 3.0; // stop and idle when too close to player
+    // Separation to maintain spacing
+    this.npcAvoidRadius = 2.5;
+    this.npcAvoidStrength = 0.6;
+    this.playerAvoidStrength = 0.8; // how strongly NPC avoids the player when close
+  }
 
-    // Street network
-    this.streetNetwork = [];
-    this.spawnPoints = [];
-    this.isNPCSystemInitialized = false;
+  setBuildings(buildings) {
+    super.setBuildings(buildings);
+  }
 
-    console.log("NPCController: Initialized");
+  // Allow spawning near player by providing player's model
+  setPlayer(playerModel) {
+    this.playerModel = playerModel;
   }
 
   async init() {
-    try {
-      console.log("NPCController: Starting initialization...");
+    await this.loadCharacter();
+    // Hide the template character; we only use it to clone meshes/animations
+    if (this.model) this.model.visible = false;
+    console.log("NPC: template character loaded and hidden");
 
-      // Load character model and animations using BaseCharacter
-      await this.loadCharacter();
-
-      // Generate street network
-      this.generateStreetNetwork();
-
-      // Create spawn points
-      this.generateSpawnPoints();
-
-      // Spawn NPCs
-      this.spawnAllNPCs();
-
-      this.isNPCSystemInitialized = true;
-      console.log("NPCController: Initialization complete");
-    } catch (error) {
-      console.error("NPCController: Initialization failed:", error);
+    // Build street lanes and intersections to walk on
+    this.generateStreetNetwork();
+    // Spawn only after player is available to keep proximity
+    if (!this.playerModel) {
+      console.warn("NPC: player not set yet, delaying spawn...");
+      setTimeout(() => this.spawnAll(), 200);
+    } else {
+      this.spawnAll();
     }
+    this.isInitialized = true;
   }
 
   generateStreetNetwork() {
-    this.streetNetwork = [];
-    const { gridSize, blockSize, laneWidth, streetSpacing } = this.cityConfig;
+    // Mirror car.js lane network so NPCs share streets
+    const gridSize = 40;
+    const blockSize = 15;
+    this.streets = [];
+    this.intersections = [];
+    const sidewalkOffset = this.laneWidth * 4.0; // stronger offset: keep NPCs off car lanes
 
-    // Generate horizontal streets
+    // Horizontal streets
     for (let z = 0; z < gridSize; z++) {
-      if (z % streetSpacing === 1) {
+      if (z % 3 === 1) {
         const streetZ = (z - gridSize / 2) * blockSize;
-
-        for (
-          let x = (-gridSize * blockSize) / 2;
-          x <= (gridSize * blockSize) / 2;
-          x += blockSize / 4
-        ) {
-          // Right lane (moving right)
-          this.streetNetwork.push({
-            x: x,
-            y: 0,
-            z: streetZ - laneWidth / 2,
-            direction: "horizontal",
-            lane: "right",
-            moveDirection: new THREE.Vector3(1, 0, 0),
-          });
-
-          // Left lane (moving left)
-          this.streetNetwork.push({
-            x: x,
-            y: 0,
-            z: streetZ + laneWidth / 2,
-            direction: "horizontal",
-            lane: "left",
-            moveDirection: new THREE.Vector3(-1, 0, 0),
-          });
-        }
+        // Sidewalk lanes (offset from car lanes)
+        this.streets.push({
+          id: `h_${z}_right_sw`,
+          start: {
+            x: (-gridSize * blockSize) / 2,
+            z: streetZ - sidewalkOffset,
+          },
+          end: {
+            x: (gridSize * blockSize) / 2,
+            z: streetZ - sidewalkOffset,
+          },
+          direction: "horizontal",
+          lane: "right_sw",
+        });
+        this.streets.push({
+          id: `h_${z}_left_sw`,
+          start: {
+            x: (gridSize * blockSize) / 2,
+            z: streetZ + sidewalkOffset,
+          },
+          end: {
+            x: (-gridSize * blockSize) / 2,
+            z: streetZ + sidewalkOffset,
+          },
+          direction: "horizontal",
+          lane: "left_sw",
+        });
       }
     }
 
-    // Generate vertical streets
+    // Vertical streets
     for (let x = 0; x < gridSize; x++) {
-      if (x % streetSpacing === 1) {
+      if (x % 3 === 1) {
         const streetX = (x - gridSize / 2) * blockSize;
+        // Sidewalk lanes (offset from car lanes)
+        this.streets.push({
+          id: `v_${x}_down_sw`,
+          start: {
+            x: streetX - sidewalkOffset,
+            z: (-gridSize * blockSize) / 2,
+          },
+          end: {
+            x: streetX - sidewalkOffset,
+            z: (gridSize * blockSize) / 2,
+          },
+          direction: "vertical",
+          lane: "down_sw",
+        });
+        this.streets.push({
+          id: `v_${x}_up_sw`,
+          start: {
+            x: streetX + sidewalkOffset,
+            z: (gridSize * blockSize) / 2,
+          },
+          end: {
+            x: streetX + sidewalkOffset,
+            z: (-gridSize * blockSize) / 2,
+          },
+          direction: "vertical",
+          lane: "up_sw",
+        });
+      }
+    }
 
-        for (
-          let z = (-gridSize * blockSize) / 2;
-          z <= (gridSize * blockSize) / 2;
-          z += blockSize / 4
-        ) {
-          // Down lane (moving down)
-          this.streetNetwork.push({
-            x: streetX - laneWidth / 2,
-            y: 0,
-            z: z,
-            direction: "vertical",
-            lane: "down",
-            moveDirection: new THREE.Vector3(0, 0, 1),
-          });
-
-          // Up lane (moving up)
-          this.streetNetwork.push({
-            x: streetX + laneWidth / 2,
-            y: 0,
-            z: z,
-            direction: "vertical",
-            lane: "up",
-            moveDirection: new THREE.Vector3(0, 0, -1),
+    // Intersections
+    for (let x = 0; x < gridSize; x++) {
+      for (let z = 0; z < gridSize; z++) {
+        if (x % 3 === 1 && z % 3 === 1) {
+          const intersectionX = (x - gridSize / 2) * blockSize;
+          const intersectionZ = (z - gridSize / 2) * blockSize;
+          this.intersections.push({
+            x: intersectionX,
+            z: intersectionZ,
+            connectedStreets: this.getConnectedStreets(
+              intersectionX,
+              intersectionZ
+            ),
           });
         }
       }
     }
-
-    console.log(
-      `NPCController: Generated ${this.streetNetwork.length} street positions`
-    );
   }
 
-  generateSpawnPoints() {
-    // Create spawn points from street network with better distribution
-    this.spawnPoints = [];
+  getConnectedStreets(x, z) {
+    const tolerance = 8; // wider to include sidewalk offsets
+    const connected = [];
+    this.streets.forEach((street) => {
+      if (street.direction === "horizontal") {
+        if (
+          Math.abs(street.start.z - z) < tolerance &&
+          street.start.x <= x &&
+          street.end.x >= x
+        ) {
+          connected.push(street.id);
+        }
+      } else {
+        if (
+          Math.abs(street.start.x - x) < tolerance &&
+          street.start.z <= z &&
+          street.end.z >= z
+        ) {
+          connected.push(street.id);
+        }
+      }
+    });
+    return connected;
+  }
 
-    // Use more spawn points - every 2nd position instead of every 5th
-    for (let i = 0; i < this.streetNetwork.length; i += 2) {
-      this.spawnPoints.push(this.streetNetwork[i]);
-    }
-
-    // Add additional random points from the street network
-    const additionalPoints = Math.min(100, this.streetNetwork.length);
-    for (let i = 0; i < additionalPoints; i++) {
-      const randomIndex = Math.floor(Math.random() * this.streetNetwork.length);
-      const point = this.streetNetwork[randomIndex];
-      // Avoid duplicates
-      if (
-        !this.spawnPoints.some(
-          (sp) => Math.abs(sp.x - point.x) < 1 && Math.abs(sp.z - point.z) < 1
-        )
-      ) {
-        this.spawnPoints.push(point);
+  // Get streets within a radius around the player's position
+  getNearbyStreets(center, radius) {
+    if (!center) return this.streets;
+    const nearby = [];
+    for (const street of this.streets) {
+      if (street.direction === "horizontal") {
+        const dz = Math.abs(street.start.z - center.z);
+        if (dz <= radius) nearby.push(street);
+      } else {
+        const dx = Math.abs(street.start.x - center.x);
+        if (dx <= radius) nearby.push(street);
       }
     }
-
-    // Shuffle spawn points for randomness
-    for (let i = this.spawnPoints.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [this.spawnPoints[i], this.spawnPoints[j]] = [
-        this.spawnPoints[j],
-        this.spawnPoints[i],
-      ];
-    }
-
-    console.log(
-      `NPCController: Generated ${this.spawnPoints.length} spawn points from ${this.streetNetwork.length} street positions`
-    );
+    return nearby.length > 0 ? nearby : this.streets;
   }
 
-  spawnAllNPCs() {
-    if (!this.characterMesh || this.spawnPoints.length === 0) {
-      console.error(
-        "NPCController: Cannot spawn NPCs - missing character mesh or spawn points"
-      );
-      return;
-    }
-
-    console.log(`NPCController: Spawning ${this.maxNPCs} NPCs from ${this.spawnPoints.length} available spawn points...`);
-
-    // Ensure we have enough spawn points
-    if (this.spawnPoints.length < this.maxNPCs) {
-      console.warn(`NPCController: Only ${this.spawnPoints.length} spawn points available for ${this.maxNPCs} NPCs`);
-    }
-
-    for (let i = 0; i < this.maxNPCs; i++) {
+  spawnAll() {
+    console.log(`NPC: spawning ${this.count} walkers on streets...`);
+    for (let i = 0; i < this.count; i++) {
       this.spawnNPC(i);
     }
-
-    console.log(`NPCController: Successfully spawned ${this.npcs.length} NPCs`);
+    console.log(`NPC: Spawned ${this.npcs.length} street walkers`);
   }
 
   spawnNPC(index) {
-    // Use modulo to cycle through spawn points if we have more NPCs than spawn points
-    const spawnPoint = this.spawnPoints[index % this.spawnPoints.length];
+    if (this.streets.length === 0) return;
+    const npcGroup = new THREE.Group();
+    npcGroup.name = `StreetNPC_${index}`;
 
-    // Create NPC wrapper group (same structure as BaseCharacter)
-    const npcModel = new THREE.Group();
+    const npcMesh = cloneSkeleton(this.characterMesh);
+    npcGroup.add(npcMesh);
+    npcGroup.scale.setScalar(0.01);
 
-    // Clone character mesh from BaseCharacter
-    const npcMesh = this.characterMesh.clone();
-    npcModel.add(npcMesh);
-
-    // Use the same scaling as BaseCharacter (0.01)
-    npcModel.scale.setScalar(0.01);
-    
-    // Add more random positioning variation
-    const randomOffsetX = (Math.random() - 0.5) * 8; // Increased from 10 to 8
-    const randomOffsetZ = (Math.random() - 0.5) * 4; // Decreased from 10 to 4
-    
-    npcModel.position.set(
-      spawnPoint.x + randomOffsetX,
-      spawnPoint.y,
-      spawnPoint.z + randomOffsetZ
-    );
-
-    // Random scale variation (applied to the mesh inside the group, not the group itself)
-    const scaleVariation = 0.8 + Math.random() * 0.4; // More variation: 0.8 to 1.2
-    npcMesh.scale.setScalar(scaleVariation);
-
-    // Setup animation mixer on the mesh (same as BaseCharacter)
-    const npcMixer = new THREE.AnimationMixer(npcMesh);
-    const npcActions = {};
-
-    // Clone actions from the main character
-    Object.keys(this.actions).forEach((actionName) => {
-      const originalAction = this.actions[actionName];
-      const clip = originalAction.getClip();
-      npcActions[actionName] = npcMixer.clipAction(clip);
+    npcMesh.traverse((child) => {
+      if (child.isMesh) {
+        child.visible = true;
+        child.frustumCulled = false;
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
     });
 
-    // Start with idle animation
-    if (npcActions["Idle"]) {
-      npcActions["Idle"].play();
+    // Choose a street near player and place within radius window along the street
+    const playerPos = this.playerModel ? this.playerModel.position : null;
+    const candidateStreets = this.getNearbyStreets(playerPos, this.spawnRadius);
+    // Prefer nearby streets that haven't been used yet AND are not occupied by other NPCs
+    let availableNearby = candidateStreets.filter(
+      (s) =>
+        !this.usedSpawnStreetIds.has(s.id) && !this.occupiedStreetIds.has(s.id)
+    );
+    // Fallback to any unoccupied nearby street
+    if (availableNearby.length === 0) {
+      availableNearby = candidateStreets.filter(
+        (s) => !this.occupiedStreetIds.has(s.id)
+      );
+    }
+    // Final fallback: allow reuse when all lanes are occupied
+    if (availableNearby.length === 0) {
+      this.usedSpawnStreetIds.clear();
+      availableNearby = candidateStreets;
+    }
+    const street =
+      availableNearby[Math.floor(Math.random() * availableNearby.length)];
+    this.usedSpawnStreetIds.add(street.id);
+
+    let attempts = 0;
+    let validPosition = false;
+    let targetX = 0;
+    let targetZ = 0;
+    const startX = street.start.x;
+    const endX = street.end.x;
+    const startZ = street.start.z;
+    const endZ = street.end.z;
+    const lenX = endX - startX;
+    const lenZ = endZ - startZ;
+
+    while (!validPosition && attempts < 20) {
+      if (street.direction === "horizontal") {
+        const minX = playerPos
+          ? Math.max(startX, playerPos.x - this.spawnRadius)
+          : startX;
+        const maxX = playerPos
+          ? Math.min(endX, playerPos.x + this.spawnRadius)
+          : endX;
+        targetX = minX + Math.random() * Math.max(1, maxX - minX);
+        targetZ = startZ; // lane z is constant
+      } else {
+        const minZ = playerPos
+          ? Math.max(startZ, playerPos.z - this.spawnRadius)
+          : startZ;
+        const maxZ = playerPos
+          ? Math.min(endZ, playerPos.z + this.spawnRadius)
+          : endZ;
+        targetZ = minZ + Math.random() * Math.max(1, maxZ - minZ);
+        targetX = startX; // lane x is constant
+      }
+
+      // spacing against existing NPCs
+      validPosition = true;
+      for (const existing of this.npcs) {
+        const d = Math.hypot(
+          existing.position.x - targetX,
+          existing.position.z - targetZ
+        );
+        if (d < this.minSpawnSpacing) {
+          validPosition = false;
+          break;
+        }
+      }
+
+      // avoid spawning too close to player
+      if (validPosition && playerPos) {
+        const dp = Math.hypot(playerPos.x - targetX, playerPos.z - targetZ);
+        if (dp < this.spawnAvoidPlayerRadius) {
+          validPosition = false;
+        }
+      }
+
+      // optional building collision check
+      if (
+        validPosition &&
+        this.checkCollision(new THREE.Vector3(targetX, 0, targetZ))
+      ) {
+        validPosition = false;
+      }
+      attempts++;
+    }
+    if (!validPosition) return;
+
+    npcGroup.position.set(targetX, 0, targetZ);
+
+    // Face along street (initial idle orientation)
+    if (street.direction === "horizontal") {
+      npcGroup.rotation.y = street.lane.includes("right")
+        ? Math.PI / 2
+        : -Math.PI / 2;
+    } else {
+      npcGroup.rotation.y = street.lane.includes("down") ? Math.PI : 0;
     }
 
-    // Generate random target point for movement
-    const randomTargetIndex = Math.floor(Math.random() * this.spawnPoints.length);
-    const targetPoint = this.spawnPoints[randomTargetIndex];
+    // Mixer and actions
+    const mixer = new THREE.AnimationMixer(npcMesh);
+    const actions = {};
+    Object.keys(this.actions || {}).forEach((name) => {
+      const clip = this.actions[name].getClip();
+      actions[name] = mixer.clipAction(clip);
+    });
 
-    // Setup NPC data with more varied speed
-    npcModel.userData = {
-      id: `npc_${index}`,
-      mixer: npcMixer,
-      actions: npcActions,
-      currentAction: "Idle",
-      speed: this.npcSpeed + (Math.random() - 0.5) * 2.0, // More speed variation
-      currentStreetPoint: spawnPoint,
-      targetPoint: targetPoint,
-      moveDirection: new THREE.Vector3(
-        targetPoint.x - spawnPoint.x,
-        0,
-        targetPoint.z - spawnPoint.z
-      ).normalize(),
-      characterMesh: npcMesh,
-      lastTargetChange: 0, // Track when we last changed target
+    // Decide idle vs moving for this NPC
+    const isIdle = true; // all NPCs idle at spawn
+    let started = "Idle";
+    if (actions["Idle"]) {
+      actions["Idle"].play();
+    }
+
+    npcGroup.userData = {
+      mixer,
+      actions,
+      currentAction: started,
+      speed: 0,
+      currentStreet: street,
+      progress:
+        street.direction === "horizontal"
+          ? (targetX - startX) / (lenX || 1)
+          : (targetZ - startZ) / (lenZ || 1),
+      isAtIntersection: false,
+      turnCooldown: 0,
+      mode: "idle", // idle | follow | walk_street (future)
+      lastPos: { x: targetX, z: targetZ },
     };
 
-    // Add to scene and track
-    this.scene.add(npcModel);
-    this.npcs.push(npcModel);
+    // Mark this street as occupied by an NPC
+    this.occupiedStreetIds.add(street.id);
 
-    console.log(
-      `NPCController: Spawned NPC ${
-        index + 1
-      } at (${spawnPoint.x.toFixed(1)}, ${spawnPoint.z.toFixed(1)}) targeting (${targetPoint.x.toFixed(1)}, ${targetPoint.z.toFixed(1)})`
-    );
+    // Optional: small marker for quick visual confirmation
+    const markerGeom = new THREE.SphereGeometry(0.8, 12, 12);
+    const markerMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+    const marker = new THREE.Mesh(markerGeom, markerMat);
+    marker.position.set(0, 6, 0);
+    npcGroup.add(marker);
+
+    this.scene.add(npcGroup);
+    this.npcs.push(npcGroup);
   }
 
   update() {
-    if (!this.isNPCSystemInitialized) return;
+    if (!this.isInitialized || this.npcs.length === 0) return;
 
     const delta = this.clock.getDelta();
+    const playerPos = this.playerModel ? this.playerModel.position : null;
 
-    // Update main character mixer (inherited from BaseCharacter)
-    if (this.mixer) {
-      this.mixer.update(delta);
-    }
+    for (let i = this.npcs.length - 1; i >= 0; i--) {
+      const npc = this.npcs[i];
+      const userData = npc.userData;
+      if (!userData || !userData.currentStreet) continue;
 
-    // Update all NPCs
-    this.npcs.forEach((npc) => {
-      this.updateNPC(npc, delta);
-    });
-  }
+      if (userData.mixer) userData.mixer.update(delta);
 
-  updateNPC(npc, delta) {
-    const userData = npc.userData;
-    if (!userData) return;
+      // Update behavior based on player proximity
+      if (playerPos) {
+        const dx = playerPos.x - npc.position.x;
+        const dz = playerPos.z - npc.position.z;
+        const distToPlayer = Math.hypot(dx, dz);
+        // Stop and idle if inside stop radius
+        if (distToPlayer <= this.playerStopRadius) {
+          if (userData.mode !== "idle") {
+            userData.mode = "idle";
+            userData.speed = 0;
+            if (userData.actions["Idle"]) {
+              this.switchNPCAction(npc, "Idle");
+            }
+          }
+        } else if (distToPlayer <= this.runRadius) {
+          // Near the player: walk
+          if (userData.mode !== "follow") userData.mode = "follow";
+          userData.speed = this.walkSpeed;
+          if (
+            userData.currentAction !== "Standard Walk" &&
+            userData.currentAction !== "Walk"
+          ) {
+            if (userData.actions["Standard Walk"]) {
+              this.switchNPCAction(npc, "Standard Walk");
+            } else if (userData.actions["Walk"]) {
+              this.switchNPCAction(npc, "Walk");
+            }
+          }
+        } else if (distToPlayer <= this.stopFollowRadius) {
+          // Farther away but within follow range: run
+          if (userData.mode !== "follow") userData.mode = "follow";
+          userData.speed = this.runSpeed;
+          if (userData.currentAction !== "Running") {
+            if (userData.actions["Running"]) {
+              this.switchNPCAction(npc, "Running");
+            } else if (userData.actions["Standard Walk"]) {
+              this.switchNPCAction(npc, "Standard Walk");
+            } else if (userData.actions["Walk"]) {
+              this.switchNPCAction(npc, "Walk");
+            }
+          }
+        } else {
+          // Too far: stop following and idle
+          if (userData.mode !== "idle") {
+            userData.mode = "idle";
+            userData.speed = 0;
+            if (userData.actions["Idle"]) this.switchNPCAction(npc, "Idle");
+          }
+        }
+      }
 
-    // Update animation mixer
-    if (userData.mixer) {
-      userData.mixer.update(delta);
-    }
+      // Movement handling based on mode
+      if (userData.mode === "follow" && playerPos) {
+        // Desired direction to player
+        let dirX = playerPos.x - npc.position.x;
+        let dirZ = playerPos.z - npc.position.z;
+        const len = Math.hypot(dirX, dirZ) || 1;
+        dirX /= len;
+        dirZ /= len;
 
-    // Simple movement along street direction
-    const moveDistance = userData.speed * delta;
-    const movement = userData.moveDirection
-      .clone()
-      .multiplyScalar(moveDistance);
-    npc.position.add(movement);
+        // Separation from nearby NPCs
+        let sepX = 0;
+        let sepZ = 0;
+        for (let j = 0; j < this.npcs.length; j++) {
+          if (j === i) continue;
+          const other = this.npcs[j];
+          const ox = npc.position.x - other.position.x;
+          const oz = npc.position.z - other.position.z;
+          const d = Math.hypot(ox, oz);
+          if (d > 0 && d < this.npcAvoidRadius) {
+            const factor = (this.npcAvoidRadius - d) / this.npcAvoidRadius;
+            sepX += (ox / d) * factor;
+            sepZ += (oz / d) * factor;
+          }
+        }
+        dirX += sepX * this.npcAvoidStrength;
+        dirZ += sepZ * this.npcAvoidStrength;
+        // Separation from player to keep space
+        const pd = Math.hypot(
+          playerPos.x - npc.position.x,
+          playerPos.z - npc.position.z
+        );
+        if (pd > 0 && pd < this.followStartRadius) {
+          const px = npc.position.x - playerPos.x;
+          const pz = npc.position.z - playerPos.z;
+          const factorP = Math.max(
+            0,
+            (this.playerStopRadius + 1 - pd) / (this.playerStopRadius + 1)
+          );
+          const nx = px / pd;
+          const nz = pz / pd;
+          dirX += nx * factorP * this.playerAvoidStrength;
+          dirZ += nz * factorP * this.playerAvoidStrength;
+        }
+        const dLen = Math.hypot(dirX, dirZ) || 1;
+        dirX /= dLen;
+        dirZ /= dLen;
 
-    // Rotate to face movement direction
-    if (userData.moveDirection.length() > 0) {
-      const angle = Math.atan2(
-        userData.moveDirection.x,
-        userData.moveDirection.z
+        // Move towards player with separation, respecting stop radius
+        let moveScale = userData.speed * delta * 0.5; // tuned factor
+        const nextX = npc.position.x + dirX * moveScale;
+        const nextZ = npc.position.z + dirZ * moveScale;
+        // Prevent entering player's stop radius
+        const nextDistPlayer = Math.hypot(
+          playerPos.x - nextX,
+          playerPos.z - nextZ
+        );
+        if (nextDistPlayer < this.playerStopRadius) {
+          moveScale = 0;
+          if (userData.mode !== "idle") {
+            userData.mode = "idle";
+            userData.speed = 0;
+            if (userData.actions["Idle"]) this.switchNPCAction(npc, "Idle");
+          }
+        }
+        // Prevent collisions with other NPCs (simple radius check)
+        for (let j = 0; j < this.npcs.length && moveScale > 0; j++) {
+          if (j === i) continue;
+          const other = this.npcs[j];
+          const nd = Math.hypot(
+            other.position.x - nextX,
+            other.position.z - nextZ
+          );
+          if (nd < this.npcAvoidRadius * 0.9) {
+            moveScale *= 0.2; // slow down sharply to avoid overlap
+            break;
+          }
+        }
+        npc.position.x += dirX * moveScale;
+        npc.position.z += dirZ * moveScale;
+
+        // If the NPC effectively stops while in follow mode, ensure Idle animation
+        if (
+          moveScale <= 0.001 &&
+          userData.actions &&
+          userData.actions["Idle"]
+        ) {
+          this.switchNPCAction(npc, "Idle");
+        }
+
+        // Face the movement direction
+        npc.rotation.y = Math.atan2(dirX, dirZ);
+      } else if (userData.mode === "idle") {
+        // Remain in place; ensure grounded
+        npc.position.y = 0;
+      } else {
+        // Legacy street walking (not used by default). Keep original logic when speed > 0
+        // Turn cooldown
+        if (userData.turnCooldown > 0) userData.turnCooldown -= delta;
+
+        // Walk along street
+        userData.progress += userData.speed * delta * 0.01;
+        const street = userData.currentStreet;
+        const newX =
+          street.start.x + (street.end.x - street.start.x) * userData.progress;
+        const newZ =
+          street.start.z + (street.end.z - street.start.z) * userData.progress;
+        npc.position.set(newX, 0, newZ);
+
+        // Try to turn at intersections
+        if (
+          userData.progress > 0.4 &&
+          userData.progress < 0.6 &&
+          userData.turnCooldown <= 0
+        ) {
+          this.checkForTurn(npc, userData);
+        }
+      }
+
+      // Fallback: if NPC did not move this frame, ensure Idle animation
+      const movedDist = Math.hypot(
+        npc.position.x - userData.lastPos.x,
+        npc.position.z - userData.lastPos.z
       );
-      npc.rotation.y = angle;
+      if (movedDist < 0.01) {
+        if (userData.currentAction !== "Idle" && userData.actions["Idle"]) {
+          this.switchNPCAction(npc, "Idle");
+        }
+      }
+      // Update last position for next frame comparison
+      userData.lastPos.x = npc.position.x;
+      userData.lastPos.z = npc.position.z;
 
-      // Switch to walk animation if not already - use "Walk" instead of "Standard Walk"
-      if (userData.currentAction !== "Walk" && userData.actions["Walk"]) {
-        this.switchNPCAction(npc, "Walk");
+      // Despawn if far beyond end and respawn
+      if (userData.progress > 1.2) {
+        // Free up the lane when NPC leaves
+        if (userData.currentStreet?.id) {
+          this.occupiedStreetIds.delete(userData.currentStreet.id);
+        }
+        this.scene.remove(npc);
+        this.npcs.splice(i, 1);
+        if (this.npcs.length < this.count) this.spawnNPC(i);
       }
     }
+  }
 
-    // Simple boundary check - wrap around city
-    const cityBounds = 400; // Half of city size
-    if (
-      Math.abs(npc.position.x) > cityBounds ||
-      Math.abs(npc.position.z) > cityBounds
-    ) {
-      // Respawn at a random spawn point
-      const newSpawnPoint =
-        this.spawnPoints[Math.floor(Math.random() * this.spawnPoints.length)];
-      npc.position.set(newSpawnPoint.x, newSpawnPoint.y, newSpawnPoint.z);
-      userData.currentStreetPoint = newSpawnPoint;
-      userData.moveDirection = newSpawnPoint.moveDirection.clone();
+  checkForTurn(npc, userData) {
+    const pos = { x: npc.position.x, z: npc.position.z };
+    const nearby = this.intersections.find((itx) => {
+      const d = Math.hypot(itx.x - pos.x, itx.z - pos.z);
+      return d < 8;
+    });
+
+    if (nearby && !userData.isAtIntersection) {
+      userData.isAtIntersection = true;
+      if (Math.random() < 0.4) this.performTurn(npc, userData, nearby);
+    } else if (!nearby) {
+      userData.isAtIntersection = false;
     }
+  }
+
+  performTurn(npc, userData, intersection) {
+    const currentStreet = userData.currentStreet;
+    const connected = intersection.connectedStreets;
+    const candidates = this.streets.filter(
+      (s) =>
+        connected.includes(s.id) &&
+        s.id !== currentStreet.id &&
+        this.isValidTurn(currentStreet, s)
+    );
+    if (candidates.length === 0) return;
+    // Prefer turning onto streets not currently occupied by other NPCs
+    let options = candidates.filter((s) => !this.occupiedStreetIds.has(s.id));
+    if (options.length === 0) options = candidates;
+    const newStreet = options[Math.floor(Math.random() * options.length)];
+
+    // Update lane occupancy (free old, claim new)
+    if (currentStreet?.id) this.occupiedStreetIds.delete(currentStreet.id);
+    this.occupiedStreetIds.add(newStreet.id);
+
+    userData.currentStreet = newStreet;
+    userData.progress = 0;
+    userData.turnCooldown = 2;
+    npc.position.set(newStreet.start.x, 0, newStreet.start.z);
+
+    if (newStreet.direction === "horizontal") {
+      // Keep horizontal facing consistent with movement direction
+      npc.rotation.y = newStreet.lane.includes("right")
+        ? Math.PI / 2
+        : -Math.PI / 2;
+    } else {
+      // Align facing with car controller after turn
+      npc.rotation.y = newStreet.lane.includes("down") ? Math.PI : 0;
+    }
+  }
+
+  isValidTurn(fromStreet, toStreet) {
+    if (fromStreet.direction === toStreet.direction)
+      return fromStreet.lane !== toStreet.lane;
+    return true;
   }
 
   switchNPCAction(npc, actionName) {
-    const userData = npc.userData;
-    if (!userData.actions || !userData.actions[actionName]) return;
-
-    // Fade out current action
-    if (userData.currentAction && userData.actions[userData.currentAction]) {
-      userData.actions[userData.currentAction].fadeOut(0.3);
+    const userData = npc.userData || {};
+    const actions = userData.actions || {};
+    if (!actions[actionName]) return;
+    if (userData.currentAction === actionName) return;
+    if (userData.currentAction && actions[userData.currentAction]) {
+      actions[userData.currentAction].fadeOut(0.2);
     }
-
-    // Fade in new action
-    userData.actions[actionName].reset().fadeIn(0.3).play();
+    const next = actions[actionName];
+    next.reset();
+    next.fadeIn(0.2);
+    next.play();
     userData.currentAction = actionName;
-  }
-
-  getNPCs() {
-    return this.npcs;
-  }
-
-  dispose() {
-    // Clean up all NPCs
-    this.npcs.forEach((npc) => {
-      if (npc.userData.mixer) {
-        npc.userData.mixer.stopAllAction();
-      }
-      if (npc.parent) {
-        npc.parent.remove(npc);
-      }
-    });
-
-    this.npcs = [];
-    this.isNPCSystemInitialized = false;
-
-    // Call parent dispose if needed
-    if (super.dispose) {
-      super.dispose();
-    }
-
-    console.log("NPCController: Disposed");
   }
 }

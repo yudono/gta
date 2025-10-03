@@ -18,6 +18,10 @@ export class CarController {
     // Car movement properties
     this.carSpeed = 3;
     this.laneWidth = 1.2;
+    // Car model appears to face -Z; add heading offset to align with movement
+    this.carHeadingOffset = 0; // remove extra 180° offset; rely on template rotation
+    // Ensure spawn diversity: avoid placing multiple cars on the same lane initially
+    this.spawnedStreetIds = new Set();
   }
 
   async init() {
@@ -268,7 +272,8 @@ export class CarController {
           object.userData.originalMaterials = originalMaterials;
 
           // Scale and prepare the car template
-          object.scale.setScalar(0.02);
+          // Reduce car size to 0.8x of previous
+          object.scale.setScalar(0.02 * 0.8);
 
           // Fix car model orientation - rotate 180 degrees around Y axis
           // This corrects the model's default forward direction
@@ -455,9 +460,18 @@ export class CarController {
       // Clone the car template
       const car = this.carTemplate.clone();
 
-      // Choose a random street lane
+      // Choose a random street lane, preferring lanes not yet used for spawning
+      let availableStreets = this.streets.filter(
+        (s) => !this.spawnedStreetIds.has(s.id)
+      );
+      // If we've exhausted unique lanes, reset to allow reuse
+      if (availableStreets.length === 0) {
+        this.spawnedStreetIds.clear();
+        availableStreets = this.streets.slice();
+      }
       const street =
-        this.streets[Math.floor(Math.random() * this.streets.length)];
+        availableStreets[Math.floor(Math.random() * availableStreets.length)];
+      this.spawnedStreetIds.add(street.id);
 
       // Check for nearby cars to maintain spacing
       const minSpacing = 8; // Minimum distance between cars
@@ -527,14 +541,10 @@ export class CarController {
       car.position.z =
         street.start.z + (street.end.z - street.start.z) * progress;
 
-      // Set car rotation based on street direction and lane (corrected for forward movement)
-      if (street.direction === "horizontal") {
-        // For horizontal streets: right lane goes east (positive X), left lane goes west (negative X)
-        car.rotation.y = street.lane === "right" ? -Math.PI / 2 : Math.PI / 2;
-      } else {
-        // For vertical streets: down lane goes south (positive Z), up lane goes north (negative Z)
-        car.rotation.y = street.lane === "down" ? Math.PI : 0;
-      }
+      // Align car rotation with actual movement vector (start -> end)
+      const dirX = street.end.x - street.start.x;
+      const dirZ = street.end.z - street.start.z;
+      car.rotation.y = Math.atan2(dirX, dirZ);
 
       // Add car properties
       car.userData = {
@@ -553,7 +563,9 @@ export class CarController {
       console.log(
         `CarController: Car spawned on ${
           street.id
-        } at (${car.position.x.toFixed(1)}, ${car.position.z.toFixed(1)})`
+        } at (${car.position.x.toFixed(1)}, ${car.position.z.toFixed(
+          1
+        )}) with rotation ${((car.rotation.y * 180) / Math.PI).toFixed(1)}°`
       );
     } catch (error) {
       console.error("CarController: Error spawning car:", error);
@@ -664,15 +676,10 @@ export class CarController {
       car.position.x = newStreet.start.x;
       car.position.z = newStreet.start.z;
 
-      // Update car rotation for new direction (corrected for forward movement)
-      if (newStreet.direction === "horizontal") {
-        // For horizontal streets: right lane goes east (positive X), left lane goes west (negative X)
-        car.rotation.y =
-          newStreet.lane === "right" ? -Math.PI / 2 : Math.PI / 2;
-      } else {
-        // For vertical streets: down lane goes south (positive Z), up lane goes north (negative Z)
-        car.rotation.y = newStreet.lane === "down" ? Math.PI : 0;
-      }
+      // Align car rotation with actual movement vector (start -> end) on new street
+      const ndx = newStreet.end.x - newStreet.start.x;
+      const ndz = newStreet.end.z - newStreet.start.z;
+      car.rotation.y = Math.atan2(ndx, ndz);
     }
   }
 

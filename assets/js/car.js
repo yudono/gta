@@ -91,73 +91,172 @@ export class CarController {
             "CarController: Car model loaded, setting up materials..."
           );
 
+          // Store original materials for cloning
+          const originalMaterials = new Map();
+
           // Apply textures to car materials
           object.traverse((child) => {
             if (child.isMesh) {
               const materialName = child.material?.name?.toLowerCase() || "";
               let texture = null;
+              let materialConfig = {};
 
-              // Map materials to appropriate textures
+              // Map materials to appropriate textures with better matching
               if (
                 materialName.includes("body") ||
-                materialName.includes("paint")
+                materialName.includes("paint") ||
+                materialName.includes("s921") ||
+                materialName.includes("exterior")
               ) {
-                texture =
-                  this.carTextures["S921_Body1.png"] ||
-                  this.carTextures["S921_Body2.png"];
-              } else if (materialName.includes("light")) {
+                texture = this.carTextures["S921_Body1.png"];
+                materialConfig = {
+                  color: 0xffffff,
+                  metalness: 0.3,
+                  roughness: 0.7,
+                };
+              } else if (
+                materialName.includes("light") ||
+                materialName.includes("lamp") ||
+                materialName.includes("s92_light")
+              ) {
                 texture = this.carTextures["S92_Light.png"];
+                materialConfig = {
+                  color: 0xffffaa,
+                  emissive: 0x222200,
+                  metalness: 0.1,
+                  roughness: 0.3,
+                };
               } else if (
                 materialName.includes("glass") ||
-                materialName.includes("window")
+                materialName.includes("window") ||
+                materialName.includes("windshield") ||
+                materialName.includes("s92_glass")
               ) {
                 texture = this.carTextures["S92_Glass.png"];
+                materialConfig = {
+                  color: 0x87ceeb,
+                  transparent: true,
+                  opacity: 0.3,
+                  metalness: 0.0,
+                  roughness: 0.1,
+                };
               } else if (
                 materialName.includes("tire") ||
-                materialName.includes("wheel")
+                materialName.includes("wheel") ||
+                materialName.includes("rubber")
               ) {
-                texture =
-                  this.carTextures["Tire.png"] ||
-                  this.carTextures["etcwheels.png"];
+                texture = this.carTextures["Tire.png"];
+                materialConfig = {
+                  color: 0x222222,
+                  metalness: 0.0,
+                  roughness: 0.9,
+                };
+              } else if (
+                materialName.includes("rim") ||
+                materialName.includes("etcwheel") ||
+                materialName.includes("alloy")
+              ) {
+                texture = this.carTextures["etcwheels.png"];
+                materialConfig = {
+                  color: 0xc0c0c0,
+                  metalness: 0.8,
+                  roughness: 0.2,
+                };
               } else if (materialName.includes("steering")) {
                 texture = this.carTextures["Steeringwheel.png"];
+                materialConfig = {
+                  color: 0x333333,
+                  metalness: 0.1,
+                  roughness: 0.8,
+                };
               } else if (
                 materialName.includes("chrome") ||
-                materialName.includes("metal")
+                materialName.includes("metal") ||
+                materialName.includes("bumper")
               ) {
                 texture = this.carTextures["CHROME_BODY.png"];
+                materialConfig = {
+                  color: 0xc0c0c0,
+                  metalness: 0.9,
+                  roughness: 0.1,
+                };
               } else if (
                 materialName.includes("panel") ||
-                materialName.includes("interior")
+                materialName.includes("interior") ||
+                materialName.includes("dashboard") ||
+                materialName.includes("vpanel")
               ) {
                 texture = this.carTextures["Vpanel.png"];
+                materialConfig = {
+                  color: 0x444444,
+                  metalness: 0.2,
+                  roughness: 0.6,
+                };
+              } else if (materialName.includes("plate")) {
+                texture = this.carTextures["plate.png"];
+                materialConfig = {
+                  color: 0xffffff,
+                  metalness: 0.1,
+                  roughness: 0.5,
+                };
+              } else if (materialName.includes("logo")) {
+                texture = this.carTextures["saab_logo.png"];
+                materialConfig = {
+                  color: 0xffffff,
+                  metalness: 0.3,
+                  roughness: 0.4,
+                };
               }
 
-              // Create material with texture or fallback color
+              // Create material with texture or fallback
               if (texture) {
-                child.material = new THREE.MeshLambertMaterial({
+                child.material = new THREE.MeshStandardMaterial({
                   map: texture,
-                  transparent: materialName.includes("glass"),
-                  opacity: materialName.includes("glass") ? 0.8 : 1.0,
+                  ...materialConfig,
                 });
+                console.log(
+                  `Applied texture to ${materialName}: ${
+                    texture.image?.src?.split("/").pop() || "unknown"
+                  }`
+                );
               } else {
-                // Fallback to colored material
+                // Fallback to colored material based on material name
                 const color = materialName.includes("tire")
                   ? 0x222222
                   : materialName.includes("glass")
                   ? 0x87ceeb
                   : materialName.includes("light")
                   ? 0xffffaa
-                  : materialName.includes("chrome")
+                  : materialName.includes("chrome") ||
+                    materialName.includes("metal")
                   ? 0xc0c0c0
-                  : 0x666666;
+                  : materialName.includes("wheel")
+                  ? 0x666666
+                  : 0x888888;
 
-                child.material = new THREE.MeshLambertMaterial({
+                child.material = new THREE.MeshStandardMaterial({
                   color: color,
                   transparent: materialName.includes("glass"),
-                  opacity: materialName.includes("glass") ? 0.8 : 1.0,
+                  opacity: materialName.includes("glass") ? 0.3 : 1.0,
+                  metalness:
+                    materialName.includes("chrome") ||
+                    materialName.includes("metal")
+                      ? 0.8
+                      : 0.2,
+                  roughness: materialName.includes("tire") ? 0.9 : 0.5,
                 });
+                console.log(
+                  `Applied fallback color to ${materialName}: #${color.toString(
+                    16
+                  )}`
+                );
               }
+
+              // Store material name for later reference
+              child.material.name = child.material.name || materialName;
+
+              // Store original material for cloning
+              originalMaterials.set(child.uuid, child.material);
 
               // Enable shadows
               child.castShadow = true;
@@ -165,15 +264,19 @@ export class CarController {
             }
           });
 
+          // Store original materials on the template
+          object.userData.originalMaterials = originalMaterials;
+
           // Scale and prepare the car template
           object.scale.setScalar(0.02);
 
-          // Don't rotate the template - let individual cars handle their own rotation
-          // object.rotation.y = Math.PI / 2; // Removed this line
+          // Fix car model orientation - rotate 180 degrees around Y axis
+          // This corrects the model's default forward direction
+          object.rotation.y = Math.PI;
 
           this.carTemplate = object;
 
-          console.log("CarController: Car model ready with textures");
+          console.log("CarController: Car model ready with improved textures");
           resolve();
         },
         (progress) => {
@@ -356,30 +459,81 @@ export class CarController {
       const street =
         this.streets[Math.floor(Math.random() * this.streets.length)];
 
-      // Set random car color
-      const carColor = new THREE.Color().setHSL(Math.random(), 0.8, 0.5);
+      // Check for nearby cars to maintain spacing
+      const minSpacing = 8; // Minimum distance between cars
+      let attempts = 0;
+      let validPosition = false;
+      let progress = 0;
+
+      while (!validPosition && attempts < 10) {
+        progress = Math.random() * 0.3; // Start cars in first 30% of streets
+
+        const testX =
+          street.start.x + (street.end.x - street.start.x) * progress;
+        const testZ =
+          street.start.z + (street.end.z - street.start.z) * progress;
+
+        // Check distance to all existing cars
+        validPosition = true;
+        for (const existingCar of this.cars) {
+          const distance = Math.sqrt(
+            Math.pow(existingCar.position.x - testX, 2) +
+              Math.pow(existingCar.position.z - testZ, 2)
+          );
+
+          if (distance < minSpacing) {
+            validPosition = false;
+            break;
+          }
+        }
+
+        attempts++;
+      }
+
+      // If we couldn't find a valid position after 10 attempts, skip spawning
+      if (!validPosition) {
+        console.log(
+          "CarController: Skipping car spawn - no valid spacing found"
+        );
+        return;
+      }
+
+      // Clone materials properly while preserving textures
       car.traverse((child) => {
         if (child.isMesh) {
+          // Clone the material to avoid shared references between cars
           child.material = child.material.clone();
-          child.material.color = carColor;
+
+          // Only apply color variation to body parts, preserve textures for other parts
+          const materialName = child.material?.name?.toLowerCase() || "";
+          if (
+            materialName.includes("body") ||
+            materialName.includes("paint") ||
+            materialName.includes("s921") ||
+            materialName.includes("exterior")
+          ) {
+            // Apply random color variation only to body parts
+            const carColor = new THREE.Color().setHSL(Math.random(), 0.6, 0.6);
+            child.material.color.multiply(carColor);
+          }
+          // For other parts (lights, glass, tires, etc.), keep original colors and textures
         }
       });
 
-      // Position car at start of street with some randomness
-      const progress = Math.random() * 0.2; // Start cars near beginning of streets
+      // Position car at calculated position
       car.position.x =
         street.start.x + (street.end.x - street.start.x) * progress;
       car.position.y = 0.5;
       car.position.z =
         street.start.z + (street.end.z - street.start.z) * progress;
 
-      // Set car rotation based on street direction and lane (adding 180° to fix backward appearance)
+      // Set car rotation based on street direction and lane (fixed to face forward)
       if (street.direction === "horizontal") {
         // For horizontal streets: right lane goes east, left lane goes west
-        car.rotation.y = street.lane === "right" ? -Math.PI / 2 : Math.PI / 2;
+        car.rotation.y = street.lane === "right" ? Math.PI / 2 : -Math.PI / 2;
       } else {
         // For vertical streets: down lane goes south, up lane goes north
-        car.rotation.y = street.lane === "down" ? Math.PI : 0;
+        car.rotation.y = street.lane === "down" ? 0 : Math.PI;
       }
 
       // Add car properties
@@ -510,14 +664,14 @@ export class CarController {
       car.position.x = newStreet.start.x;
       car.position.z = newStreet.start.z;
 
-      // Update car rotation for new direction (adding 180° to fix backward appearance)
+      // Update car rotation for new direction (fixed to face forward)
       if (newStreet.direction === "horizontal") {
         // For horizontal streets: right lane goes east, left lane goes west
         car.rotation.y =
-          newStreet.lane === "right" ? -Math.PI / 2 : Math.PI / 2;
+          newStreet.lane === "right" ? Math.PI / 2 : -Math.PI / 2;
       } else {
         // For vertical streets: down lane goes south, up lane goes north
-        car.rotation.y = newStreet.lane === "down" ? Math.PI : 0;
+        car.rotation.y = newStreet.lane === "down" ? 0 : Math.PI;
       }
     }
   }
